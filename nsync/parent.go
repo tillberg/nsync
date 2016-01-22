@@ -4,6 +4,8 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tillberg/ansi-log"
@@ -13,11 +15,15 @@ import (
 
 var pathUpdateRequests = make(chan string)
 
+var IGNORED = stringset.New(".gut", "pkg", "testdata")
+var IGNORED_SUFFIX = stringset.New(".tmp", ".lock")
+var EXTRA_IGNORED = []string{"/go/bin", "/go/tmp"}
+
 func execParent() {
 	listener := watcher.NewListener()
 	listener.Path = RootPath
 	listener.DebounceDuration = 100 * time.Millisecond
-	listener.Ignored = stringset.New(".gut", "go/bin", "go/pkg", "tmp")
+	listener.Ignored = IGNORED
 	listener.NotifyDirectoriesOnStartup = true
 	err := listener.Start()
 	if err != nil {
@@ -51,12 +57,29 @@ func handleParentMessages() {
 	}
 }
 
+func isIgnored(path string) bool {
+	if IGNORED.Has(filepath.Base(path)) {
+		return true
+	}
+	if IGNORED_SUFFIX.Has(filepath.Ext(path)) {
+		return true
+	}
+	for _, str := range EXTRA_IGNORED {
+		if strings.Contains(path, str) {
+			return true
+		}
+	}
+	return false
+}
+
 func receiveFileRequestMessage(buf []byte) {
 	rel, buf := decodeString(buf)
 	path := getAbsPath(rel)
-	go func() {
-		pathUpdateRequests <- path
-	}()
+	if !isIgnored(path) {
+		go func() {
+			pathUpdateRequests <- path
+		}()
+	}
 }
 
 func sendDirUpdateMessage(path string) {
@@ -65,10 +88,16 @@ func sendDirUpdateMessage(path string) {
 		alog.Printf("@(error:Unable to lstat directory %s: %v)\n", path, err)
 		return
 	}
-	fileInfos, err := ioutil.ReadDir(path)
+	_fileInfos, err := ioutil.ReadDir(path)
 	if err != nil {
 		alog.Printf("@(error:Unable to list directory %s: %v)\n", path, err)
 		return
+	}
+	fileInfos := []os.FileInfo{}
+	for _, fileInfo := range _fileInfos {
+		if !isIgnored(filepath.Join(path, fileInfo.Name())) {
+			fileInfos = append(fileInfos, fileInfo)
+		}
 	}
 	rel := relPath(path)
 	if rel == "" {
@@ -108,6 +137,9 @@ func sendDirUpdateMessage(path string) {
 }
 
 func sendFileUpdateMessage(path string, info os.FileInfo) {
+	if isIgnored(path) {
+		return
+	}
 	rel := relPath(path)
 	if rel == "" {
 		return
@@ -172,7 +204,7 @@ func readPathUpdates(fsPathUpdates <-chan string) {
 	for {
 		select {
 		case path = <-fsPathUpdates:
-			alog.Printf("@(dim:fs:) @(cyan:%s)\n", path)
+			// alog.Printf("@(dim:fs:) @(cyan:%s)\n", path)
 		case path = <-pathUpdateRequests:
 			alog.Printf("@(dim:req:) @(cyan:%s)\n", path)
 		}

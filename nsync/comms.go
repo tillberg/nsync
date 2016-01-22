@@ -41,7 +41,9 @@ func killChildSshProcess() {
 	if childSshProcess != nil {
 		done := make(chan error)
 		go func() {
+			alog.Printf("@(dim:Killing child ssh process...)\n")
 			done <- childSshProcess.Kill()
+			alog.Printf("@(dim:Child ssh process killed...)\n")
 		}()
 		select {
 		case <-done:

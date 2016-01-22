@@ -139,7 +139,7 @@ func receiveDirUpdateMessage(buf []byte) {
 			} else {
 				delete(srcFiles, name)
 			}
-		} else {
+		} else if !isIgnored(subpath) {
 			alog.Printf("@(dim:Deleting) @(cyan:%s)\n", subpath)
 			err := os.RemoveAll(subpath)
 			if err != nil {
