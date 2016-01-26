@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/tillberg/ansi-log"
@@ -123,8 +124,8 @@ func connectChild(remoteHost, remoteRoot string) {
 	// alog.Println("My path is", exePath)
 	ctx := bismuth.NewExecContext()
 	ctx.Connect()
-	ctx.Quote("copy-mkdir", "ssh", remoteHost, "mkdir -p ~/.csync")
-	retCode, err := ctx.Quote("copy", "rsync", "-a", exePath, remoteHost+":~/.csync/csync")
+	ctx.Quote("copy-mkdir", "ssh", remoteHost, "mkdir -p ~/.nsync")
+	retCode, err := ctx.Quote("copy", "rsync", "-a", exePath, remoteHost+":~/.nsync/nsync")
 	if retCode != 0 {
 		alog.Println("copy retCode", retCode)
 	}
@@ -132,9 +133,27 @@ func connectChild(remoteHost, remoteRoot string) {
 		alog.Println(err)
 		return
 	}
-	cmd := exec.Command("ssh", remoteHost, "~/.csync/csync", "--child", remoteRoot)
+	cmd := exec.Command("ssh", remoteHost, "~/.nsync/nsync", "--child", remoteRoot)
 	if Opts.Verbose {
 		cmd.Args = append(cmd.Args, "--verbose")
+	}
+	if Opts.IgnorePart != "" {
+		cmd.Args = append(cmd.Args, "--ignore-part", Opts.IgnorePart)
+	}
+	if Opts.IgnoreSuffix != "" {
+		cmd.Args = append(cmd.Args, "--ignore-suffix", Opts.IgnoreSuffix)
+	}
+	if Opts.IgnoreSubstring != "" {
+		cmd.Args = append(cmd.Args, "--ignore-substring", Opts.IgnoreSubstring)
+	}
+	if Opts.DeletePart != "" {
+		cmd.Args = append(cmd.Args, "--delete-part", Opts.DeletePart)
+	}
+	if Opts.DeleteSuffix != "" {
+		cmd.Args = append(cmd.Args, "--delete-suffix", Opts.DeleteSuffix)
+	}
+	if Opts.DeleteSubstring != "" {
+		cmd.Args = append(cmd.Args, "--delete-substring", Opts.DeleteSubstring)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -200,13 +219,41 @@ func relPath(path string) string {
 	return rel
 }
 
+func fileInfoToStatus(fileInfo os.FileInfo) FileStatus {
+	if fileInfo != nil {
+		uid := NoOwnerInfo
+		gid := NoOwnerInfo
+		if statT, ok := fileInfo.Sys().(*syscall.Stat_t); ok {
+			uid = statT.Uid
+			gid = statT.Gid
+		}
+		return FileStatus{
+			Size:    fileInfo.Size(),
+			ModTime: fileInfo.ModTime(),
+			Mode:    fileInfo.Mode(),
+			Uid:     uid,
+			Gid:     gid,
+			Exists:  true,
+		}
+	} else {
+		return FileStatus{
+			Size:   0,
+			Exists: false,
+		}
+	}
+}
+
 const encodeSizeInt = 8
-const encodeSizeFileStatus = 4 * encodeSizeInt
+const encodeSizeFileStatus = 5 * encodeSizeInt
+
+var NoOwnerInfo = uint32(0x7fffffff)
 
 type FileStatus struct {
 	Size    int64
 	ModTime time.Time
 	Mode    os.FileMode
+	Uid     uint32
+	Gid     uint32
 	Exists  bool
 }
 
@@ -226,6 +273,7 @@ func encodeFileStatus(buf []byte, v FileStatus) []byte {
 	buf = encodeInt(buf, int64(v.Size))
 	buf = encodeInt(buf, v.ModTime.UnixNano())
 	buf = encodeInt(buf, int64(v.Mode))
+	buf = encodeInt(buf, int64((int64(v.Uid)<<32)|int64(v.Gid)))
 	exists := int64(0)
 	if v.Exists {
 		exists = 1
@@ -247,11 +295,14 @@ func decodeFileStatus(buf []byte) (FileStatus, []byte) {
 	size, buf := decodeInt(buf)
 	modTime, buf := decodeInt(buf)
 	mode, buf := decodeInt(buf)
+	owners, buf := decodeInt(buf)
 	exists, buf := decodeInt(buf)
 	return FileStatus{
 		Size:    size,
 		ModTime: time.Unix(modTime/1e9, modTime%1e9),
 		Mode:    os.FileMode(mode),
+		Uid:     uint32(owners >> 32),
+		Gid:     uint32(owners),
 		Exists:  exists != 0,
 	}, buf
 }

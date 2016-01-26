@@ -14,7 +14,7 @@ const MODE_MASK = 0777 ^ 022
 
 func execChild() {
 	alog.SetPrefix("")
-	alog.Printf("@(dim:csync child started, writing to) @(cyan:%s)\n", RootPath)
+	alog.Printf("@(dim:nsync child started, writing to) @(cyan:%s)\n", RootPath)
 
 	go sendMessages(os.Stdout, MessagesToParent, make(chan error))
 	go receiveMessages(os.Stdin, MessagesToChild, make(chan error))
@@ -129,17 +129,26 @@ func receiveDirUpdateMessage(buf []byte) {
 		name := fileInfo.Name()
 		subpath := filepath.Join(path, name)
 		srcFile, srcExists := srcFiles[name]
+		destStatus := fileInfoToStatus(fileInfo)
 		if srcExists {
-			if fileInfo.ModTime().Unix() != srcFile.ModTime.Unix() {
+			isSymlink := fileInfo.Mode()&os.ModeSymlink != 0
+			isDir := fileInfo.IsDir()
+			if !isSymlink && !isDir && (destStatus.ModTime.Unix() != srcFile.ModTime.Unix()) {
 				alog.Printf("@(dim:Need update for %s, source newer)\n", subpath)
-			} else if fileInfo.Size() != srcFile.Size {
+			} else if !isDir && (destStatus.Size != srcFile.Size) {
 				alog.Printf("@(dim:Need update for %s, source diff size)\n", subpath)
-			} else if MODE_MASK&fileInfo.Mode()&os.ModePerm != MODE_MASK&srcFile.Mode&os.ModePerm {
+			} else if MODE_MASK&destStatus.Mode&os.ModePerm != MODE_MASK&srcFile.Mode&os.ModePerm {
 				alog.Printf("@(dim:Need update for %s, source diff permissions)\n", subpath)
+			} else if destStatus.Mode&os.ModeSymlink != srcFile.Mode&os.ModeSymlink {
+				alog.Printf("@(dim:Need update for %s, symlink/regular file mismatch)\n", subpath)
+			} else if !isSymlink && destStatus.Uid != NoOwnerInfo && srcFile.Uid != NoOwnerInfo && (destStatus.Uid != srcFile.Uid) {
+				alog.Printf("@(dim:Need update for %s, uid mismatch)\n", subpath)
+			} else if !isSymlink && destStatus.Gid != NoOwnerInfo && srcFile.Gid != NoOwnerInfo && (destStatus.Gid != srcFile.Gid) {
+				alog.Printf("@(dim:Need update for %s, gid mismatch)\n", subpath)
 			} else {
 				delete(srcFiles, name)
 			}
-		} else if !isIgnored(subpath) {
+		} else if shouldDelete(subpath) {
 			alog.Printf("@(dim:Deleting) @(cyan:%s)\n", subpath)
 			err := os.RemoveAll(subpath)
 			if err != nil {
@@ -149,6 +158,13 @@ func receiveDirUpdateMessage(buf []byte) {
 	}
 	if !writeModTime(path, dirStatus.ModTime) {
 		return
+	}
+	if dirStatus.Uid != NoOwnerInfo && dirStatus.Gid != NoOwnerInfo {
+		err := os.Chown(path, int(dirStatus.Uid), int(dirStatus.Gid))
+		if err != nil {
+			alog.Printf("@(error:Error chowning %s to %d/%d: %v)\n", path, dirStatus.Uid, dirStatus.Gid, err)
+			return
+		}
 	}
 	err = os.Chmod(path, dirStatus.Mode&os.ModePerm)
 	if err != nil {
@@ -179,21 +195,45 @@ func receiveFileUpdateMessage(buf []byte) {
 	}
 	parentModTimes := preserveParentModTimes(rel)
 	if fileStatus.Exists {
-		file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, fileStatus.Mode&os.ModePerm)
-		if err != nil {
-			alog.Printf("@(error:Error opening %s for writing: %v)\n", path, err)
-			return
+		tmpPath := path + ".nsynctmp"
+		objType := "file"
+		if fileStatus.Mode.IsRegular() {
+			file, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, fileStatus.Mode&os.ModePerm)
+			if err != nil {
+				alog.Printf("@(error:Error opening %s for writing: %v)\n", tmpPath, err)
+				return
+			}
+			_, err = file.Write(filebuf)
+			file.Close()
+			if err != nil {
+				alog.Printf("@(error:Error writing contents of %s: %v)\n", tmpPath, err)
+				return
+			}
+			if fileStatus.Uid != NoOwnerInfo && fileStatus.Gid != NoOwnerInfo {
+				err := os.Chown(tmpPath, int(fileStatus.Uid), int(fileStatus.Gid))
+				if err != nil {
+					alog.Printf("@(error:Error chowning %s to %d/%d: %v)\n", tmpPath, fileStatus.Uid, fileStatus.Gid, err)
+					return
+				}
+			}
+		} else {
+			objType = "symlink"
+			target := string(filebuf)
+			err := os.Symlink(target, tmpPath)
+			if err != nil {
+				alog.Printf("@(error:Error writing symlink to %s from %s: %v)\n", target, tmpPath, err)
+				return
+			}
 		}
-		_, err = file.Write(filebuf)
-		file.Close()
+		err := os.Rename(tmpPath, path)
 		if err != nil {
-			alog.Printf("@(error:Error writing contents of %s: %v)\n", path, err)
+			alog.Printf("@(error:Error moving %s to %s: %v)\n", tmpPath, path, err)
 			return
 		}
 		if !writeModTime(path, fileStatus.ModTime) {
 			return
 		}
-		alog.Printf("@(dim:Wrote) @(cyan:%s)@(dim:,) @(cyan:%d) @(dim:bytes.)\n", path, len(filebuf))
+		alog.Printf("@(dim:Wrote %s) @(cyan:%s)@(dim:,) @(cyan:%d) @(dim:bytes.)\n", objType, path, len(filebuf))
 	} else {
 		err := os.RemoveAll(path)
 		if err != nil {

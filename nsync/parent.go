@@ -15,15 +15,29 @@ import (
 
 var pathUpdateRequests = make(chan string)
 
-var IGNORED = stringset.New(".gut", "pkg", "testdata")
-var IGNORED_SUFFIX = stringset.New(".tmp", ".lock")
-var EXTRA_IGNORED = []string{"/go/bin", "/go/tmp"}
+var PathSeparator = string(os.PathSeparator)
+
+var ignorePart *stringset.StringSet
+var ignoreSuffix []string
+var ignoreSubstring []string
+var deletePart *stringset.StringSet
+var deleteSuffix []string
+var deleteSubstring []string
 
 func execParent() {
+	ignorePart = stringset.New(filepath.SplitList(Opts.IgnorePart)...)
+	ignoreSuffix = filepath.SplitList(Opts.IgnoreSuffix)
+	ignoreSubstring = filepath.SplitList(Opts.IgnoreSubstring)
+	deletePart = stringset.New(filepath.SplitList(Opts.DeletePart)...)
+	deleteSuffix = filepath.SplitList(Opts.DeleteSuffix)
+	deleteSubstring = filepath.SplitList(Opts.DeleteSubstring)
+
 	listener := watcher.NewListener()
 	listener.Path = RootPath
 	listener.DebounceDuration = 100 * time.Millisecond
-	listener.Ignored = IGNORED
+	listener.IgnorePart = deletePart
+	listener.IgnoreSuffix = deleteSuffix
+	listener.IgnoreSubstring = deleteSubstring
 	listener.NotifyDirectoriesOnStartup = true
 	err := listener.Start()
 	if err != nil {
@@ -57,25 +71,41 @@ func handleParentMessages() {
 	}
 }
 
-func isIgnored(path string) bool {
-	if IGNORED.Has(filepath.Base(path)) {
-		return true
+func matches(path string, parts *stringset.StringSet, suffixes, substrings []string) bool {
+	rel := relPath(path)
+	if parts != nil {
+		for _, part := range strings.Split(rel, PathSeparator) {
+			if parts.Has(part) {
+				return true
+			}
+		}
 	}
-	if IGNORED_SUFFIX.Has(filepath.Ext(path)) {
-		return true
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(rel, suffix) {
+			return true
+		}
 	}
-	for _, str := range EXTRA_IGNORED {
-		if strings.Contains(path, str) {
+	wrappedRel := PathSeparator + rel + PathSeparator
+	for _, str := range substrings {
+		if strings.Contains(wrappedRel, str) {
 			return true
 		}
 	}
 	return false
 }
 
+func shouldIgnore(path string) bool {
+	return matches(path, ignorePart, ignoreSuffix, ignoreSubstring) || shouldDelete(path)
+}
+
+func shouldDelete(path string) bool {
+	return matches(path, deletePart, deleteSuffix, deleteSubstring)
+}
+
 func receiveFileRequestMessage(buf []byte) {
 	rel, buf := decodeString(buf)
 	path := getAbsPath(rel)
-	if !isIgnored(path) {
+	if !shouldIgnore(path) {
 		go func() {
 			pathUpdateRequests <- path
 		}()
@@ -83,6 +113,9 @@ func receiveFileRequestMessage(buf []byte) {
 }
 
 func sendDirUpdateMessage(path string) {
+	if shouldIgnore(path) {
+		return
+	}
 	dirStat, err := os.Lstat(path)
 	if err != nil {
 		alog.Printf("@(error:Unable to lstat directory %s: %v)\n", path, err)
@@ -95,7 +128,7 @@ func sendDirUpdateMessage(path string) {
 	}
 	fileInfos := []os.FileInfo{}
 	for _, fileInfo := range _fileInfos {
-		if !isIgnored(filepath.Join(path, fileInfo.Name())) {
+		if !shouldIgnore(filepath.Join(path, fileInfo.Name())) {
 			fileInfos = append(fileInfos, fileInfo)
 		}
 	}
@@ -115,17 +148,10 @@ func sendDirUpdateMessage(path string) {
 	buf := fullbuf
 	buf = encodeString(buf, rel)
 	buf = encodeInt(buf, int64(len(fileInfos)))
-	buf = encodeFileStatus(buf, FileStatus{
-		ModTime: dirStat.ModTime(),
-		Mode:    dirStat.Mode(),
-	})
+	buf = encodeFileStatus(buf, fileInfoToStatus(dirStat))
 	for _, fileInfo := range fileInfos {
 		buf = encodeString(buf, fileInfo.Name())
-		buf = encodeFileStatus(buf, FileStatus{
-			Size:    fileInfo.Size(),
-			ModTime: fileInfo.ModTime(),
-			Mode:    fileInfo.Mode(),
-		})
+		buf = encodeFileStatus(buf, fileInfoToStatus(fileInfo))
 	}
 	if len(buf) != 0 {
 		alog.Println("Mis-allocated buffer in sendDirUpdateMessage, bytes remaining:", len(buf))
@@ -137,39 +163,39 @@ func sendDirUpdateMessage(path string) {
 }
 
 func sendFileUpdateMessage(path string, info os.FileInfo) {
-	if isIgnored(path) {
+	if shouldIgnore(path) {
 		return
 	}
 	rel := relPath(path)
 	if rel == "" {
 		return
 	}
-	var status FileStatus
-	if info != nil {
-		status.Size = info.Size()
-		status.ModTime = info.ModTime()
-		status.Mode = info.Mode()
-		status.Exists = true
-	} else {
-		status.Size = 0
-		status.Exists = false
-	}
+	status := fileInfoToStatus(info)
 	msgSize := encodeSizeString(rel) + encodeSizeFileStatus + int(status.Size)
 	fullbuf := make([]byte, msgSize)
 	buf := fullbuf
 	buf = encodeString(buf, rel)
 	buf = encodeFileStatus(buf, status)
 	if status.Exists {
-		file, err := os.Open(path)
-		if err != nil {
-			alog.Printf("@(error:Error opening file %s: %v)\n", path, err)
-			return
-		}
-		defer file.Close()
-		_, err = io.ReadFull(file, buf)
-		if err != nil {
-			alog.Printf("@(error:Error reading file %s: %v)\n", path, err)
-			return
+		if info.Mode().IsRegular() {
+			file, err := os.Open(path)
+			if err != nil {
+				alog.Printf("@(error:Error opening file %s: %v)\n", path, err)
+				return
+			}
+			defer file.Close()
+			_, err = io.ReadFull(file, buf)
+			if err != nil {
+				alog.Printf("@(error:Error reading file %s: %v)\n", path, err)
+				return
+			}
+		} else {
+			linkStr, err := os.Readlink(path)
+			if err != nil {
+				alog.Printf("@(error:Error reading symlink %s: %v)\n", path, err)
+				return
+			}
+			copy(buf, linkStr)
 		}
 	}
 	// The file might have grown, and we might not be at EOF. But we'll just ignore
@@ -193,8 +219,8 @@ func doUpdatePath(path string) {
 	}
 	if info.IsDir() {
 		sendDirUpdateMessage(path)
-	} else if info.Mode()&os.ModeSymlink == 0 {
-		// it's a regular file... probably?
+	} else {
+		// it's a regular file or a symlink
 		sendFileUpdateMessage(path, info)
 	}
 }

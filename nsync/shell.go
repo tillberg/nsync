@@ -10,6 +10,13 @@ import (
 )
 
 var Opts struct {
+	IgnorePart      string `long:"ignore-part"`
+	IgnoreSuffix    string `long:"ignore-suffix"`
+	IgnoreSubstring string `long:"ignore-substring"`
+	DeletePart      string `long:"delete-part"`
+	DeleteSuffix    string `long:"delete-suffix"`
+	DeleteSubstring string `long:"delete-substring"`
+
 	Verbose bool `short:"v" long:"verbose" description:"Show verbose debug information"`
 	NoColor bool `long:"no-color" description:"Disable ANSI colors"`
 	Child   bool `long:"child" description:"Sets this instance into child/remote mode"`
@@ -48,7 +55,7 @@ func Shell() {
 	remoteFullPath := args[1]
 	remoteFullPathParts := strings.SplitN(remoteFullPath, ":", 2)
 	remoteHost, remoteRoot := remoteFullPathParts[0], remoteFullPathParts[1]
-	alog.Printf("@(dim:csync started, syncing) @(cyan:%s) @(dim:to) @(cyan:%s)@(dim::)@(cyan:%s)\n", RootPath, remoteHost, remoteRoot)
+	alog.Printf("@(dim:nsync started, syncing) @(cyan:%s) @(dim:to) @(cyan:%s)@(dim::)@(cyan:%s)\n", RootPath, remoteHost, remoteRoot)
 	go connectChildForever(remoteHost, remoteRoot)
 	go execParent()
 	<-sighup
