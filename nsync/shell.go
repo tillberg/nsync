@@ -2,11 +2,13 @@ package nsync
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jessevdk/go-flags"
 	"github.com/tillberg/ansi-log"
 	"github.com/tillberg/autorestart"
+	"github.com/tillberg/stringset"
 )
 
 var Opts struct {
@@ -26,6 +28,13 @@ var RootPath string
 var MessagesToParent = make(chan Message)
 var MessagesToChild = make(chan Message)
 
+var ignorePart *stringset.StringSet
+var ignoreSuffix []string
+var ignoreSubstring []string
+var deletePart *stringset.StringSet
+var deleteSuffix []string
+var deleteSubstring []string
+
 func Shell() {
 	sighup := autorestart.NotifyOnSighup()
 	args, err := flags.ParseArgs(&Opts, os.Args[1:])
@@ -40,6 +49,12 @@ func Shell() {
 	if Opts.NoColor {
 		alog.DisableColor()
 	}
+	ignorePart = stringset.New(filepath.SplitList(Opts.IgnorePart)...)
+	ignoreSuffix = filepath.SplitList(Opts.IgnoreSuffix)
+	ignoreSubstring = filepath.SplitList(Opts.IgnoreSubstring)
+	deletePart = stringset.New(filepath.SplitList(Opts.DeletePart)...)
+	deleteSuffix = filepath.SplitList(Opts.DeleteSuffix)
+	deleteSubstring = filepath.SplitList(Opts.DeleteSubstring)
 	if Opts.Child {
 		if len(args) < 1 {
 			alog.Fatalln("Not enough arguments, need 1")
@@ -48,6 +63,7 @@ func Shell() {
 		execChild()
 		return
 	}
+
 	if len(args) < 2 {
 		alog.Fatalln("Not enough arguments, need 2")
 	}
@@ -56,8 +72,12 @@ func Shell() {
 	remoteFullPathParts := strings.SplitN(remoteFullPath, ":", 2)
 	remoteHost, remoteRoot := remoteFullPathParts[0], remoteFullPathParts[1]
 	alog.Printf("@(dim:nsync started, syncing) @(cyan:%s) @(dim:to) @(cyan:%s)@(dim::)@(cyan:%s)\n", RootPath, remoteHost, remoteRoot)
-	go connectChildForever(remoteHost, remoteRoot)
+	onChildExit := make(chan error)
+	go connectChildForever(remoteHost, remoteRoot, onChildExit)
 	go execParent()
-	<-sighup
-	killChildSshProcess()
+	select {
+	case <-sighup:
+		killChildSshProcess()
+	case <-onChildExit:
+	}
 }

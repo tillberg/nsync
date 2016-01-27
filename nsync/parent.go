@@ -17,21 +17,7 @@ var pathUpdateRequests = make(chan string)
 
 var PathSeparator = string(os.PathSeparator)
 
-var ignorePart *stringset.StringSet
-var ignoreSuffix []string
-var ignoreSubstring []string
-var deletePart *stringset.StringSet
-var deleteSuffix []string
-var deleteSubstring []string
-
 func execParent() {
-	ignorePart = stringset.New(filepath.SplitList(Opts.IgnorePart)...)
-	ignoreSuffix = filepath.SplitList(Opts.IgnoreSuffix)
-	ignoreSubstring = filepath.SplitList(Opts.IgnoreSubstring)
-	deletePart = stringset.New(filepath.SplitList(Opts.DeletePart)...)
-	deleteSuffix = filepath.SplitList(Opts.DeleteSuffix)
-	deleteSubstring = filepath.SplitList(Opts.DeleteSubstring)
-
 	listener := watcher.NewListener()
 	listener.Path = RootPath
 	listener.DebounceDuration = 100 * time.Millisecond
@@ -94,12 +80,20 @@ func matches(path string, parts *stringset.StringSet, suffixes, substrings []str
 	return false
 }
 
+func matchesIgnores(path string) bool {
+	return matches(path, ignorePart, ignoreSuffix, ignoreSubstring)
+}
+
+func matchesDeletes(path string) bool {
+	return matches(path, deletePart, deleteSuffix, deleteSubstring)
+}
+
 func shouldIgnore(path string) bool {
-	return matches(path, ignorePart, ignoreSuffix, ignoreSubstring) || shouldDelete(path)
+	return matchesIgnores(path) || matchesDeletes(path)
 }
 
 func shouldDelete(path string) bool {
-	return matches(path, deletePart, deleteSuffix, deleteSubstring)
+	return matchesDeletes(path) || !matchesIgnores(path)
 }
 
 func receiveFileRequestMessage(buf []byte) {

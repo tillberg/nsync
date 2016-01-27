@@ -2,6 +2,7 @@ package nsync
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -188,6 +189,8 @@ func connectChild(remoteHost, remoteRoot string) {
 		err := <-done
 		if err != nil && err != io.EOF {
 			lg.Printf("@(error:Error reading subprocess output: %v)\n", err)
+
+			return
 		}
 	}
 	if err := cmd.Wait(); err != nil {
@@ -198,12 +201,10 @@ func connectChild(remoteHost, remoteRoot string) {
 	childSshProcessMutex.Unlock()
 }
 
-func connectChildForever(remoteHost, remoteRoot string) {
-	for {
-		connectChild(remoteHost, remoteRoot)
-		time.Sleep(5 * time.Second)
-		alog.Printf("@(dim:Reconnecting child...)\n")
-	}
+func connectChildForever(remoteHost, remoteRoot string, onChildExit chan error) {
+	connectChild(remoteHost, remoteRoot)
+	alog.Printf("@(dim:Child disconnected. Restarting...)\n")
+	onChildExit <- errors.New("Child disconnected.")
 }
 
 func getAbsPath(rel string) string {
