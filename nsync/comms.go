@@ -134,7 +134,7 @@ func connectChild(remoteHost, remoteRoot string) {
 		alog.Println(err)
 		return
 	}
-	cmd := exec.Command("ssh", remoteHost, "~/.nsync/nsync", "--child", remoteRoot)
+	cmd := exec.Command("ssh", remoteHost, "sudo", "~/.nsync/nsync", "--child", remoteRoot)
 	if Opts.Verbose {
 		cmd.Args = append(cmd.Args, "--verbose")
 	}
