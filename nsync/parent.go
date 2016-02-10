@@ -27,7 +27,7 @@ func execParent() {
 	listener.NotifyDirectoriesOnStartup = true
 	err := listener.Start()
 	if err != nil {
-		alog.Printf("@(error:Error starting watcher: %v)\n", err)
+		alog.Printf("@(error:Error starting watcher for %s: %v)\n", RootPath, err)
 	}
 	go readPathUpdates(listener.NotifyChan)
 	go handleParentMessages()
