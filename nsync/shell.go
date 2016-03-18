@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jessevdk/go-flags"
 	"github.com/tillberg/ansi-log"
@@ -79,5 +80,8 @@ func Shell() {
 	case <-sighup:
 		killChildSshProcess()
 	case <-onChildExit:
+		// Restart everything if the child drops out (this is kludgy but effective)
+	case <-time.After(20 * time.Minute):
+		// Restart periodically, at least until I figure out what causes hangs
 	}
 }
