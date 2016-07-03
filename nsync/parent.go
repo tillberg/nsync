@@ -219,11 +219,12 @@ func doUpdatePath(path string) {
 	}
 }
 
-func readPathUpdates(fsPathUpdates <-chan string) {
+func readPathUpdates(fsPathUpdates <-chan watcher.PathEvent) {
 	var path string
 	for {
 		select {
-		case path = <-fsPathUpdates:
+		case pathEvent := <-fsPathUpdates:
+			path = pathEvent.Path
 			// alog.Printf("@(dim:fs:) @(cyan:%s)\n", path)
 		case path = <-pathUpdateRequests:
 			alog.Printf("@(dim:req:) @(cyan:%s)\n", path)
