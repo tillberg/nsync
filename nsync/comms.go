@@ -1,6 +1,7 @@
 package nsync
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -11,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tillberg/ansi-log"
+	"github.com/tillberg/alog"
 	"github.com/tillberg/bismuth"
 )
 
@@ -57,27 +58,32 @@ func killChildSshProcess() {
 	}
 }
 
-var keepAliveInterval = 30 * time.Second
+var keepAliveInterval = 60 * time.Second
 
 func receiveMessages(reader io.Reader, messages chan<- Message, done chan error) {
+	// lg := alog.New(os.Stderr, "", 0)
 	for {
 		var op OpByte
-		// alog.Println("READING OP")
+		// lg.Replacef("")
 		err := binary.Read(reader, binary.LittleEndian, &op)
 		if err != nil {
 			alog.Printf("@(error:Error reading message: %v)\n", err)
 			done <- err
 			return
 		}
+		// alog.Println("READ OP", op.String())
 		var size uint32
-		// alog.Println("READING SIZE")
 		err = binary.Read(reader, binary.LittleEndian, &size)
 		if err != nil {
 			alog.Printf("@(error:Error reading message: %v)\n", err)
 			done <- err
 			return
 		}
+		// alog.Println("READ SIZE", size)
 		var buf = make([]byte, size)
+		// for {
+		// lg.Replacef("Reading %d of %d bytes...", 0, size)
+
 		// alog.Println("READING BUF", size)
 		_, err = io.ReadFull(reader, buf)
 		if err != nil {
@@ -85,6 +91,8 @@ func receiveMessages(reader io.Reader, messages chan<- Message, done chan error)
 			done <- err
 			return
 		}
+		// 	break
+		// }
 		// alog.Println("READ DONE")
 		messages <- Message{
 			Op:  op,
@@ -93,48 +101,66 @@ func receiveMessages(reader io.Reader, messages chan<- Message, done chan error)
 	}
 }
 func sendMessages(writer io.Writer, messages <-chan Message, done chan error) {
+	bufWriter := bufio.NewWriter(writer)
 	for message := range messages {
-		// alog.Println("SENDING OP")
-		err := binary.Write(writer, binary.LittleEndian, message.Op)
+		// alog.Println("SENDING OP", message.Op.String())
+		err := binary.Write(bufWriter, binary.LittleEndian, message.Op)
 		if err != nil {
 			alog.Printf("@(error:Error writing message: %v)\n", err)
 			done <- err
 			return
 		}
-		// alog.Println("SENDING SIZE")
-		err = binary.Write(writer, binary.LittleEndian, uint32(len(message.Buf)))
+		// alog.Println("SENDING SIZE", len(message.Buf))
+		err = binary.Write(bufWriter, binary.LittleEndian, uint32(len(message.Buf)))
 		if err != nil {
 			alog.Printf("@(error:Error writing message: %v)\n", err)
 			done <- err
 			return
 		}
 		// alog.Println("SENDING BUF", len(message.Buf))
-		_, err = writer.Write(message.Buf)
+		_, err = bufWriter.Write(message.Buf)
 		if err != nil {
 			alog.Printf("@(error:Error writing message: %v)\n", err)
 			done <- err
 			return
 		}
 		// alog.Println("SEND DONE")
+		err = bufWriter.Flush()
+		if err != nil {
+			alog.Printf("@(error:Error writing message: %v)\n", err)
+			done <- err
+			return
+		}
 	}
 }
 
-func connectChild(remoteHost, remoteRoot string) {
+func connectChild(remoteHost, remoteRoot, remoteUser, nsyncPath string) {
 	lg := alog.New(os.Stderr, "@(dim:{isodate} [remote]) ", 0)
-	exePath, err := exec.LookPath(os.Args[0])
-	// alog.Println("My path is", exePath)
 	ctx := bismuth.NewExecContext()
 	ctx.Connect()
-	ctx.Quote("copy-mkdir", "ssh", remoteHost, "mkdir -p ~/.nsync")
-	retCode, err := ctx.Quote("copy", "rsync", "-a", exePath, remoteHost+":~/.nsync/nsync")
-	if retCode != 0 {
-		alog.Println("copy retCode", retCode)
+	if nsyncPath == "" {
+		nsyncPath = "~/.nsync/nsync"
+		exePath, err := exec.LookPath(os.Args[0])
+		alog.BailIf(err)
+		// alog.Println("My path is", exePath)
+		ctx.Quote("copy-mkdir", "ssh", remoteHost, "mkdir -p ~/.nsync")
+		retCode, err := ctx.Quote("copy", "rsync", "-a", exePath, remoteHost+":~/.nsync/nsync")
+		if retCode != 0 {
+			alog.Println("copy retCode", retCode)
+		}
+		if err != nil {
+			alog.Println(err)
+			return
+		}
 	}
-	if err != nil {
-		alog.Println(err)
-		return
+	sshArgs := []string{
+		remoteHost,
 	}
-	cmd := exec.Command("ssh", remoteHost, "sudo", "~/.nsync/nsync", "--child", remoteRoot)
+	if remoteUser != "" {
+		sshArgs = append(sshArgs, []string{"sudo", "-u", remoteUser}...)
+	}
+	sshArgs = append(sshArgs, []string{nsyncPath, "--child", remoteRoot}...)
+	cmd := exec.Command("ssh", sshArgs...)
 	if Opts.Verbose {
 		cmd.Args = append(cmd.Args, "--verbose")
 	}
@@ -201,8 +227,8 @@ func connectChild(remoteHost, remoteRoot string) {
 	childSshProcessMutex.Unlock()
 }
 
-func connectChildForever(remoteHost, remoteRoot string, onChildExit chan error) {
-	connectChild(remoteHost, remoteRoot)
+func connectChildForever(remoteHost, remoteRoot, remoteUser, nsyncPath string, onChildExit chan error) {
+	connectChild(remoteHost, remoteRoot, remoteUser, nsyncPath)
 	alog.Printf("@(dim:Child disconnected. Restarting...)\n")
 	onChildExit <- errors.New("Child disconnected.")
 }
@@ -227,6 +253,13 @@ func fileInfoToStatus(fileInfo os.FileInfo) FileStatus {
 		if statT, ok := fileInfo.Sys().(*syscall.Stat_t); ok {
 			uid = statT.Uid
 			gid = statT.Gid
+			// This only happens in the parent:
+			if remoteUid, ok := rewriteUidMap[uid]; ok {
+				uid = remoteUid
+			}
+			if remoteGid, ok := rewriteGidMap[gid]; ok {
+				gid = remoteGid
+			}
 		}
 		return FileStatus{
 			Size:    fileInfo.Size(),

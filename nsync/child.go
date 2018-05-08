@@ -3,10 +3,11 @@ package nsync
 import (
 	"io/ioutil"
 	"os"
+	"os/user"
 	"path/filepath"
 	"time"
 
-	"github.com/tillberg/ansi-log"
+	"github.com/tillberg/alog"
 )
 
 // XXX it would be better to look up the actual umask:
@@ -14,7 +15,13 @@ const MODE_MASK = 0777 ^ 022
 
 func execChild() {
 	alog.SetPrefix("")
-	alog.Printf("@(dim:nsync child started, writing to) @(cyan:%s)\n", RootPath)
+	userName := "<unknown>"
+	if u, err := user.Current(); err != nil {
+		alog.Printf("Error reading username: %s\n", err)
+	} else {
+		userName = u.Username
+	}
+	alog.Printf("@(dim:nsync child started, writing to) @(cyan:%s) @(dim:as) @(cyan:%s)\n", RootPath, userName)
 
 	go sendMessages(os.Stdout, MessagesToParent, make(chan error))
 	go receiveMessages(os.Stdin, MessagesToChild, make(chan error))
@@ -25,7 +32,7 @@ func execChild() {
 func handleChildMessages() {
 	for {
 		select {
-		case <-time.After(3 * keepAliveInterval):
+		case <-time.After(6 * keepAliveInterval):
 			alog.Printf("Timed out after not receiving keepalive. Exiting.\n")
 			return
 		case message := <-MessagesToChild:
@@ -57,7 +64,9 @@ func sendFileRequestMessage(path string) {
 	if len(buf) != 0 {
 		alog.Println("Mis-allocated buffer in sendFileRequestMessage, bytes remaining:", len(buf))
 	}
-	alog.Printf("@(dim:Requesting update for) @(cyan:%s)\n", rel)
+	if Opts.Verbose {
+		alog.Printf("@(dim:Requesting update for) @(cyan:%s)\n", rel)
+	}
 	MessagesToParent <- Message{
 		Op:  OpFileRequest,
 		Buf: fullbuf,
@@ -166,17 +175,27 @@ func receiveDirUpdateMessage(buf []byte) {
 			return
 		}
 	}
-	err = os.Chmod(path, dirStatus.Mode&os.ModePerm)
+	dirInfo, err := os.Stat(path)
 	if err != nil {
-		alog.Printf("@(error:Error chmod-ing directory %s: %v)\n", path, err)
+		alog.Printf("@(error:Error stat-ing directory %s: %v)\n", path, err)
 		return
+	}
+	desiredMode := MODE_MASK & dirStatus.Mode & os.ModePerm
+	if dirInfo.Mode() != desiredMode {
+		err = os.Chmod(path, desiredMode)
+		if err != nil {
+			alog.Printf("@(error:Error chmod-ing directory %s: %v)\n", path, err)
+			return
+		}
 	}
 	restoreParentModTimes(rel, parentModTimes)
 	if Opts.Verbose {
 		alog.Printf("@(dim:Finished processing dir update for) @(cyan:%s)\n", path)
 	}
 	if len(srcFiles) > 0 {
-		alog.Printf("@(dim:Requesting update for) @(cyan:%d) @(dim:files in) @(cyan:%s)\n", len(srcFiles), path)
+		if Opts.Verbose {
+			alog.Printf("@(dim:Requesting update for) @(cyan:%d) @(dim:files in) @(cyan:%s)\n", len(srcFiles), path)
+		}
 		go func() {
 			for name := range srcFiles {
 				sendFileRequestMessage(filepath.Join(path, name))

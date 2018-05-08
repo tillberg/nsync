@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tillberg/ansi-log"
+	"github.com/tillberg/alog"
 	"github.com/tillberg/stringset"
 	"github.com/tillberg/watcher"
 )
@@ -71,7 +71,16 @@ func matches(path string, parts *stringset.StringSet, suffixes, substrings []str
 			return true
 		}
 	}
-	wrappedRel := PathSeparator + rel + PathSeparator
+	wrappedRel := "^"
+	if !strings.HasPrefix(rel, "/") {
+		wrappedRel += PathSeparator
+	}
+	wrappedRel += rel
+	// XXX This should really only be added for directories:
+	if !strings.HasSuffix(rel, "/") {
+		wrappedRel += PathSeparator
+	}
+	wrappedRel += "$"
 	for _, str := range substrings {
 		if strings.Contains(wrappedRel, str) {
 			return true
@@ -192,6 +201,7 @@ func sendFileUpdateMessage(path string, info os.FileInfo) {
 			copy(buf, linkStr)
 		}
 	}
+	alog.Printf("Sending update for %s, %d bytes\n", path, len(fullbuf))
 	// The file might have grown, and we might not be at EOF. But we'll just ignore
 	// that here and let the next FileUpdateMessage take care of it.
 	MessagesToChild <- Message{
@@ -227,7 +237,9 @@ func readPathUpdates(fsPathUpdates <-chan watcher.PathEvent) {
 			path = pathEvent.Path
 			// alog.Printf("@(dim:fs:) @(cyan:%s)\n", path)
 		case path = <-pathUpdateRequests:
-			alog.Printf("@(dim:req:) @(cyan:%s)\n", path)
+			if Opts.Verbose {
+				alog.Printf("@(dim:req:) @(cyan:%s)\n", path)
+			}
 		}
 		doUpdatePath(path)
 	}
