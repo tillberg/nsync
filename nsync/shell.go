@@ -14,15 +14,13 @@ import (
 )
 
 var Opts struct {
+	IncludePath string `long:"include-path"`
+
 	IgnorePart      string `long:"ignore-part"`
 	IgnoreSuffix    string `long:"ignore-suffix"`
 	IgnoreSubstring string `long:"ignore-substring"`
-	DeletePart      string `long:"delete-part"`
-	DeleteSuffix    string `long:"delete-suffix"`
-	DeleteSubstring string `long:"delete-substring"`
 
-	RemoteUser string `long:"remote-user"`
-
+	RemoteUser  string `long:"remote-user"`
 	RewriteUids string `long:"rewrite-uids"`
 	RewriteGids string `long:"rewrite-gids"`
 
@@ -37,12 +35,12 @@ var RootPath string
 var MessagesToParent = make(chan Message)
 var MessagesToChild = make(chan Message)
 
-var ignorePart *stringset.StringSet
+var includePath = stringset.New()
+var includeDirs = stringset.New()
+
+var ignorePart = stringset.New()
 var ignoreSuffix []string
 var ignoreSubstring []string
-var deletePart *stringset.StringSet
-var deleteSuffix []string
-var deleteSubstring []string
 var rewriteUidMap map[uint32]uint32
 var rewriteGidMap map[uint32]uint32
 
@@ -61,12 +59,16 @@ func Shell() {
 	if Opts.NoColor {
 		alog.DisableColor()
 	}
+	includePath = stringset.New()
+	for _, path := range filepath.SplitList(Opts.IncludePath) {
+		for strings.HasSuffix(path, "/") {
+			path = path[:len(path)-1]
+		}
+		includePath.Add(path)
+	}
 	ignorePart = stringset.New(filepath.SplitList(Opts.IgnorePart)...)
 	ignoreSuffix = filepath.SplitList(Opts.IgnoreSuffix)
 	ignoreSubstring = filepath.SplitList(Opts.IgnoreSubstring)
-	deletePart = stringset.New(filepath.SplitList(Opts.DeletePart)...)
-	deleteSuffix = filepath.SplitList(Opts.DeleteSuffix)
-	deleteSubstring = filepath.SplitList(Opts.DeleteSubstring)
 	rewriteUidMap = parseIdMap(Opts.RewriteUids)
 	rewriteGidMap = parseIdMap(Opts.RewriteGids)
 	if Opts.Child {
@@ -79,6 +81,17 @@ func Shell() {
 	}
 	if len(args) < 2 {
 		alog.Fatalln("Not enough arguments, need 2")
+	}
+	for path := range includePath.Raw() {
+		for path != "." && path != "/" {
+			includeDirs.Add(path)
+			path = filepath.Dir(path)
+		}
+		includeDirs.Add("/")
+	}
+	if includeDirs.Len() != 0 {
+		alog.Printf("Include paths: %q\n", includePath.All())
+		alog.Printf("Include dirs: %q\n", includeDirs.All())
 	}
 	RootPath = args[0]
 	remoteFullPath := args[1]

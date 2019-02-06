@@ -164,6 +164,9 @@ func connectChild(remoteHost, remoteRoot, remoteUser, nsyncPath string) {
 	if Opts.Verbose {
 		cmd.Args = append(cmd.Args, "--verbose")
 	}
+	if Opts.IncludePath != "" {
+		cmd.Args = append(cmd.Args, "--include-path", Opts.IncludePath)
+	}
 	if Opts.IgnorePart != "" {
 		cmd.Args = append(cmd.Args, "--ignore-part", Opts.IgnorePart)
 	}
@@ -172,15 +175,6 @@ func connectChild(remoteHost, remoteRoot, remoteUser, nsyncPath string) {
 	}
 	if Opts.IgnoreSubstring != "" {
 		cmd.Args = append(cmd.Args, "--ignore-substring", Opts.IgnoreSubstring)
-	}
-	if Opts.DeletePart != "" {
-		cmd.Args = append(cmd.Args, "--delete-part", Opts.DeletePart)
-	}
-	if Opts.DeleteSuffix != "" {
-		cmd.Args = append(cmd.Args, "--delete-suffix", Opts.DeleteSuffix)
-	}
-	if Opts.DeleteSubstring != "" {
-		cmd.Args = append(cmd.Args, "--delete-substring", Opts.DeleteSubstring)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

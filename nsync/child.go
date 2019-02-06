@@ -155,13 +155,7 @@ func receiveDirUpdateMessage(buf []byte) {
 			} else if !isSymlink && destStatus.Gid != NoOwnerInfo && srcFile.Gid != NoOwnerInfo && (destStatus.Gid != srcFile.Gid) {
 				alog.Printf("@(dim:Need update for %s, gid mismatch)\n", subpath)
 			} else {
-				delete(srcFiles, name)
-			}
-		} else if shouldDelete(subpath) {
-			alog.Printf("@(dim:Deleting) @(cyan:%s)\n", subpath)
-			err := os.RemoveAll(subpath)
-			if err != nil {
-				alog.Printf("@(error:Error deleting %s: %v)\n", subpath, err)
+				delete(srcFiles, name) // "delete" from map, not from filesystem :)
 			}
 		}
 	}

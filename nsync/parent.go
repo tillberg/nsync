@@ -20,10 +20,7 @@ var PathSeparator = string(os.PathSeparator)
 func execParent() {
 	listener := watcher.NewListener()
 	listener.Path = RootPath
-	listener.DebounceDuration = 100 * time.Millisecond
-	listener.IgnorePart = deletePart
-	listener.IgnoreSuffix = deleteSuffix
-	listener.IgnoreSubstring = deleteSubstring
+	listener.DebounceDuration = 200 * time.Millisecond
 	listener.NotifyDirectoriesOnStartup = true
 	err := listener.Start()
 	if err != nil {
@@ -89,34 +86,61 @@ func matches(path string, parts *stringset.StringSet, suffixes, substrings []str
 	return false
 }
 
+func matchesIncludes(path string, isDir bool) bool {
+	relPath, err := filepath.Rel(RootPath, path)
+	alog.BailIf(err)
+	if relPath == "." {
+		relPath = "/"
+	} else {
+		relPath = "/" + relPath
+	}
+	if isDir && includeDirs.Has(relPath) {
+		if Opts.Verbose {
+			alog.Printf("@(dim:Dir %q is not included.)\n", path)
+		}
+		return true
+	}
+	var relPathIter = relPath
+	for relPathIter != "." && relPathIter != "/" {
+		if includePath.Has(relPathIter) {
+			return true
+		}
+		relPathIter = filepath.Dir(relPathIter)
+	}
+	if Opts.Verbose {
+		alog.Printf("@(dim:Path %q [dir=%t] is not included.)\n", relPath, isDir)
+	}
+	return false
+}
+
 func matchesIgnores(path string) bool {
 	return matches(path, ignorePart, ignoreSuffix, ignoreSubstring)
 }
 
-func matchesDeletes(path string) bool {
-	return matches(path, deletePart, deleteSuffix, deleteSubstring)
-}
-
-func shouldIgnore(path string) bool {
-	return matchesIgnores(path) || matchesDeletes(path)
-}
-
-func shouldDelete(path string) bool {
-	return matchesDeletes(path) || !matchesIgnores(path)
+func shouldIgnore(path string, isDir bool) bool {
+	if includePath.Len() != 0 && !matchesIncludes(path, isDir) {
+		return true
+	}
+	return matchesIgnores(path)
 }
 
 func receiveFileRequestMessage(buf []byte) {
 	rel, buf := decodeString(buf)
 	path := getAbsPath(rel)
-	if !shouldIgnore(path) {
+	if !shouldIgnore(path, true) { // We pass "true" because it *could* be a dir
 		go func() {
 			pathUpdateRequests <- path
 		}()
+	} else if Opts.Verbose {
+		alog.Printf("@(dim:Ignoring request for %q)\n", rel)
 	}
 }
 
 func sendDirUpdateMessage(path string) {
-	if shouldIgnore(path) {
+	if shouldIgnore(path, true) {
+		if Opts.Verbose {
+			alog.Printf("@(dim:Ignoring dir update for %q)\n", path)
+		}
 		return
 	}
 	dirStat, err := os.Lstat(path)
@@ -131,7 +155,7 @@ func sendDirUpdateMessage(path string) {
 	}
 	fileInfos := []os.FileInfo{}
 	for _, fileInfo := range _fileInfos {
-		if !shouldIgnore(filepath.Join(path, fileInfo.Name())) {
+		if !shouldIgnore(filepath.Join(path, fileInfo.Name()), fileInfo.IsDir()) {
 			fileInfos = append(fileInfos, fileInfo)
 		}
 	}
@@ -159,6 +183,9 @@ func sendDirUpdateMessage(path string) {
 	if len(buf) != 0 {
 		alog.Println("Mis-allocated buffer in sendDirUpdateMessage, bytes remaining:", len(buf))
 	}
+	if Opts.Verbose {
+		alog.Printf("@(dim:Sending path update for %q to child.)\n", path)
+	}
 	MessagesToChild <- Message{
 		Op:  OpDirUpdate,
 		Buf: fullbuf,
@@ -166,7 +193,7 @@ func sendDirUpdateMessage(path string) {
 }
 
 func sendFileUpdateMessage(path string, info os.FileInfo) {
-	if shouldIgnore(path) {
+	if shouldIgnore(path, false) {
 		return
 	}
 	rel := relPath(path)
@@ -235,7 +262,9 @@ func readPathUpdates(fsPathUpdates <-chan watcher.PathEvent) {
 		select {
 		case pathEvent := <-fsPathUpdates:
 			path = pathEvent.Path
-			// alog.Printf("@(dim:fs:) @(cyan:%s)\n", path)
+			if Opts.Verbose {
+				alog.Printf("@(dim:fs event:) @(green:%s) @(cyan:%s)\n", pathEvent.Op.String(), path)
+			}
 		case path = <-pathUpdateRequests:
 			if Opts.Verbose {
 				alog.Printf("@(dim:req:) @(cyan:%s)\n", path)
