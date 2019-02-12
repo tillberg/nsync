@@ -13,21 +13,21 @@ import (
 )
 
 var Opts struct {
-	IncludePath string `long:"include-path"`
+	IncludePath []string `long:"include-path" description:"Restrict syncing to this path, relative to the root synced path. Ignores still apply afterward. Repeat to specify multiple paths."`
 
-	IgnorePart      string `long:"ignore-part"`
-	IgnoreSuffix    string `long:"ignore-suffix"`
-	IgnoreSubstring string `long:"ignore-substring"`
+	IgnorePart      []string `long:"ignore-part" description:"Ignore syncing any files/folders with these names, e.g. node_modules or .git. Repeat to specify multiple names."`
+	IgnoreSuffix    []string `long:"ignore-suffix" description:"Ignore syncing any files/folders with these extensions, e.g. .a or .pyc. Repeat to specify multiple extensions."`
+	IgnoreSubstring []string `long:"ignore-substring" description:"Ignore syncing any files/folders with these substrings in their whole paths, e.g. go/bin or some/node_modules. Repeat to specify multiple substrings."`
 
-	RemoteUser  string `long:"remote-user"`
-	RewriteUids string `long:"rewrite-uids"`
-	RewriteGids string `long:"rewrite-gids"`
+	RemoteUser  string   `long:"remote-user" description:"Execute nsync as a different user on the remote host."`
+	RewriteUids []string `long:"rewrite-uid" description:"Rewrite UIDs from local to remote host, e.g. 501:1000. Repeat to specify multiple mappings."`
+	RewriteGids []string `long:"rewrite-gid" description:"Rewrite GIDs from local to remote host, e.g. 20:1000. Repeat to specify multiple mappings."`
 
-	NsyncPath string `long:"nsync-path"`
+	NsyncPath string `long:"nsync-path" description:"Path to Nsync binary on the remote host. This is required for cross-architecture syncing. If not specified, Nsync uses rsync to copy itself to the remote host first."`
 
 	Verbose bool `short:"v" long:"verbose" description:"Show verbose debug information"`
 	NoColor bool `long:"no-color" description:"Disable ANSI colors"`
-	Child   bool `long:"child" description:"Sets this instance into child/remote mode"`
+	Child   bool `long:"child" description:"Internal use only. Puts this nsync instance into child/remote mode."`
 }
 
 var RootPath string
@@ -59,15 +59,15 @@ func Shell() {
 		alog.DisableColor()
 	}
 	includePath = stringset.New()
-	for _, path := range filepath.SplitList(Opts.IncludePath) {
+	for _, path := range Opts.IncludePath {
 		for strings.HasSuffix(path, "/") {
 			path = path[:len(path)-1]
 		}
 		includePath.Add(path)
 	}
-	ignorePart = stringset.New(filepath.SplitList(Opts.IgnorePart)...)
-	ignoreSuffix = filepath.SplitList(Opts.IgnoreSuffix)
-	ignoreSubstring = filepath.SplitList(Opts.IgnoreSubstring)
+	ignorePart = stringset.New(Opts.IgnorePart...)
+	ignoreSuffix = Opts.IgnoreSuffix
+	ignoreSubstring = Opts.IgnoreSubstring
 	rewriteUidMap = parseIdMap(Opts.RewriteUids)
 	rewriteGidMap = parseIdMap(Opts.RewriteGids)
 	if Opts.Child {
@@ -111,15 +111,12 @@ func Shell() {
 	}
 }
 
-func parseIdMap(mapStr string) map[uint32]uint32 {
+func parseIdMap(mapStrs []string) map[uint32]uint32 {
 	m := map[uint32]uint32{}
-	for _, part := range strings.Split(mapStr, ",") {
-		if len(part) == 0 {
-			continue
-		}
+	for _, part := range mapStrs {
 		kvParts := strings.Split(part, ":")
 		if len(kvParts) != 2 {
-			alog.Panicf("Error parsing %q\n", mapStr)
+			alog.Panicf("Error parsing id mapping %q\n", part)
 		}
 		kStr, vStr := kvParts[0], kvParts[1]
 		k, err := strconv.ParseInt(kStr, 10, 32)

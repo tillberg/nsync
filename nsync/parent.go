@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/tillberg/alog"
+	"github.com/tillberg/notifywrap"
 	"github.com/tillberg/stringset"
-	"github.com/tillberg/watcher"
 )
 
 var pathUpdateRequests = make(chan string)
@@ -18,15 +18,14 @@ var pathUpdateRequests = make(chan string)
 var PathSeparator = string(os.PathSeparator)
 
 func execParent() {
-	listener := watcher.NewListener()
-	listener.Path = RootPath
-	listener.DebounceDuration = 200 * time.Millisecond
-	listener.NotifyDirectoriesOnStartup = true
-	err := listener.Start()
-	if err != nil {
-		alog.Printf("@(error:Error starting watcher for %s: %v)\n", RootPath, err)
+	watcherOpts := notifywrap.Opts{
+		DebounceDuration:           200 * time.Millisecond,
+		CoalesceEventTypes:         true,
+		NotifyDirectoriesOnStartup: true,
 	}
-	go readPathUpdates(listener.NotifyChan)
+	pathEvents, err := notifywrap.WatchRecursive(RootPath, watcherOpts)
+	alog.BailIf(err)
+	go readPathUpdates(pathEvents)
 	go handleParentMessages()
 	go sendKeepAlives()
 }
@@ -49,7 +48,7 @@ func handleParentMessages() {
 		case OpFileRequest:
 			receiveFileRequestMessage(message.Buf)
 		default:
-			alog.Printf("@(error:Unknown op %s)\b", message.Op)
+			alog.Printf("@(error:Unknown op %s)\n", message.Op)
 		}
 	}
 }
@@ -256,14 +255,14 @@ func doUpdatePath(path string) {
 	}
 }
 
-func readPathUpdates(fsPathUpdates <-chan watcher.PathEvent) {
+func readPathUpdates(pathEvents <-chan *notifywrap.EventInfo) {
 	var path string
 	for {
 		select {
-		case pathEvent := <-fsPathUpdates:
+		case pathEvent := <-pathEvents:
 			path = pathEvent.Path
 			if Opts.Verbose {
-				alog.Printf("@(dim:fs event:) @(green:%s) @(cyan:%s)\n", pathEvent.Op.String(), path)
+				alog.Printf("@(dim:fs event:) @(green:%s) @(cyan:%s)\n", pathEvent.Event, path)
 			}
 		case path = <-pathUpdateRequests:
 			if Opts.Verbose {
