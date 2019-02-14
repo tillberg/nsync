@@ -21,7 +21,7 @@ func execChild() {
 	} else {
 		userName = u.Username
 	}
-	alog.Printf("@(dim:nsync child started, writing to) @(cyan:%s) @(dim:as) @(cyan:%s)\n", RootPath, userName)
+	alog.Printf("@(dim:nsync child started, writing to) @(cyan:%s) @(dim:as) @(cyan:%s)\n", Opts.Positional.LocalPath, userName)
 
 	go sendMessages(os.Stdout, MessagesToParent, make(chan error))
 	go receiveMessages(os.Stdin, MessagesToChild, make(chan error))

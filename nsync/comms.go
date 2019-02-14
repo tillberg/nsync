@@ -159,7 +159,12 @@ func connectChild(remoteHost, remoteRoot, remoteUser, nsyncPath string) {
 	if remoteUser != "" {
 		sshArgs = append(sshArgs, []string{"sudo", "-u", remoteUser}...)
 	}
-	sshArgs = append(sshArgs, []string{nsyncPath, "--child", remoteRoot}...)
+	sshArgs = append(sshArgs, []string{
+		nsyncPath,
+		"--child",
+		remoteRoot,
+		"childmode:childmode", // This is ignored, but makes flags config simpler
+	}...)
 	cmd := exec.Command("ssh", sshArgs...)
 	if Opts.Verbose {
 		cmd.Args = append(cmd.Args, "--verbose")
@@ -228,11 +233,11 @@ func connectChildForever(remoteHost, remoteRoot, remoteUser, nsyncPath string, o
 }
 
 func getAbsPath(rel string) string {
-	return filepath.Join(RootPath, rel)
+	return filepath.Join(Opts.Positional.LocalPath, rel)
 }
 
 func relPath(path string) string {
-	rel, err := filepath.Rel(RootPath, path)
+	rel, err := filepath.Rel(Opts.Positional.LocalPath, path)
 	if err != nil {
 		alog.Printf("@(Error:Unable to get relative path to %s: %v)\n", path, err)
 		return ""

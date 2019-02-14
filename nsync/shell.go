@@ -13,6 +13,11 @@ import (
 )
 
 var Opts struct {
+	Positional struct {
+		LocalPath          string `positional-arg-name:"localpath"`
+		RemoteUserHostPath string `positional-arg-name:"[remoteuser@]remotehost:remotepath"`
+	} `positional-args:"yes" required:"yes"`
+
 	IncludePath []string `long:"include-path" description:"Restrict syncing to this path, relative to the root synced path. Ignores still apply afterward. Repeat to specify multiple paths."`
 
 	IgnorePart      []string `long:"ignore-part" description:"Ignore syncing any files/folders with these names, e.g. node_modules or .git. Repeat to specify multiple names."`
@@ -27,10 +32,9 @@ var Opts struct {
 
 	Verbose bool `short:"v" long:"verbose" description:"Show verbose debug information"`
 	NoColor bool `long:"no-color" description:"Disable ANSI colors"`
-	Child   bool `long:"child" description:"Internal use only. Puts this nsync instance into child/remote mode."`
+	Child   bool `long:"child" hidden:"true" description:"Internal use only. Puts this nsync instance into child/remote mode."`
 }
 
-var RootPath string
 var MessagesToParent = make(chan Message)
 var MessagesToChild = make(chan Message)
 
@@ -55,6 +59,9 @@ func Shell() {
 		alog.Printf("Error parsing command-line options: %s\n", err)
 		return
 	}
+	if len(args) > 0 {
+		alog.Fatalf("Unexpected extra conditional args: %q\n", args)
+	}
 	if Opts.NoColor {
 		alog.DisableColor()
 	}
@@ -70,17 +77,6 @@ func Shell() {
 	ignoreSubstring = Opts.IgnoreSubstring
 	rewriteUidMap = parseIdMap(Opts.RewriteUids)
 	rewriteGidMap = parseIdMap(Opts.RewriteGids)
-	if Opts.Child {
-		if len(args) < 1 {
-			alog.Fatalln("Not enough arguments, need 1")
-		}
-		RootPath = args[0]
-		execChild()
-		return
-	}
-	if len(args) < 2 {
-		alog.Fatalln("Not enough arguments, need 2")
-	}
 	for path := range includePath.Raw() {
 		for path != "." && path != "/" {
 			includeDirs.Add(path)
@@ -92,11 +88,13 @@ func Shell() {
 		alog.Printf("Include paths: %q\n", includePath.All())
 		alog.Printf("Include dirs: %q\n", includeDirs.All())
 	}
-	RootPath = args[0]
-	remoteFullPath := args[1]
-	remoteFullPathParts := strings.SplitN(remoteFullPath, ":", 2)
+	if Opts.Child {
+		execChild()
+		return
+	}
+	remoteFullPathParts := strings.SplitN(Opts.Positional.RemoteUserHostPath, ":", 2)
 	remoteHost, remoteRoot := remoteFullPathParts[0], remoteFullPathParts[1]
-	alog.Printf("@(dim:nsync started, syncing) @(cyan:%s) @(dim:to) @(cyan:%s)@(dim::)@(cyan:%s)\n", RootPath, remoteHost, remoteRoot)
+	alog.Printf("@(dim:nsync started, syncing) @(cyan:%s) @(dim:to) @(cyan:%s)@(dim::)@(cyan:%s)\n", Opts.Positional.LocalPath, remoteHost, remoteRoot)
 	if len(rewriteUidMap)|len(rewriteGidMap) != 0 {
 		alog.Printf("@(dim:using uidMap: %v, gidMap %v)\n", rewriteUidMap, rewriteGidMap)
 	}

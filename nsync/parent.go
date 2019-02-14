@@ -23,7 +23,7 @@ func execParent() {
 		CoalesceEventTypes:         true,
 		NotifyDirectoriesOnStartup: true,
 	}
-	pathEvents, err := notifywrap.WatchRecursive(RootPath, watcherOpts)
+	pathEvents, err := notifywrap.WatchRecursive(Opts.Positional.LocalPath, watcherOpts)
 	alog.BailIf(err)
 	go readPathUpdates(pathEvents)
 	go handleParentMessages()
@@ -86,7 +86,7 @@ func matches(path string, parts *stringset.StringSet, suffixes, substrings []str
 }
 
 func matchesIncludes(path string, isDir bool) bool {
-	relPath, err := filepath.Rel(RootPath, path)
+	relPath, err := filepath.Rel(Opts.Positional.LocalPath, path)
 	alog.BailIf(err)
 	if relPath == "." {
 		relPath = "/"
