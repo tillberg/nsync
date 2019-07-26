@@ -23,8 +23,17 @@ func execParent() {
 		CoalesceEventTypes:         true,
 		NotifyDirectoriesOnStartup: true,
 	}
-	pathEvents, err := notifywrap.WatchRecursive(Opts.Positional.LocalPath, watcherOpts)
-	alog.BailIf(err)
+	pathEvents := make(chan *notifywrap.EventInfo, 100)
+	if len(Opts.IncludePath) == 0 {
+		err := notifywrap.WatchRecursive(Opts.Positional.LocalPath, pathEvents, watcherOpts)
+		alog.BailIf(err)
+	} else {
+		for _, includePath := range Opts.IncludePath {
+			watchRoot := filepath.Join(Opts.Positional.LocalPath, includePath)
+			err := notifywrap.WatchRecursive(watchRoot, pathEvents, watcherOpts)
+			alog.BailIf(err)
+		}
+	}
 	go readPathUpdates(pathEvents)
 	go handleParentMessages()
 	go sendKeepAlives()

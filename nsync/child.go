@@ -157,6 +157,8 @@ func receiveDirUpdateMessage(buf []byte) {
 			} else {
 				delete(srcFiles, name) // "delete" from map, not from filesystem :)
 			}
+		} else {
+			alog.Printf("@(warn:I think I should delete %s, no longer exists in src)\n", subpath)
 		}
 	}
 	if !writeModTime(path, dirStatus.ModTime) {
