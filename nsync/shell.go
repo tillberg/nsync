@@ -66,7 +66,11 @@ func Shell() {
 		alog.DisableColor()
 	}
 	includePath = stringset.New()
-	for _, path := range Opts.IncludePath {
+	for i, path := range Opts.IncludePath {
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+			Opts.IncludePath[i] = path
+		}
 		for strings.HasSuffix(path, "/") {
 			path = path[:len(path)-1]
 		}
